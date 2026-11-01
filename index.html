@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoalPulse — مباريات اليوم</title>
+<style>
+  :root {
+    --bg: #f2f5f0;
+    --surface: #ffffff;
+    --ink: #0f2a1d;
+    --muted: #5b6f62;
+    --line: #cbd7cc;
+    --pitch: #14532d;
+    --live: #d6342c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1a13;
+      --surface: #14241b;
+      --ink: #e8f1ea;
+      --muted: #93a99a;
+      --line: #28402f;
+      --pitch: #6fcf97;
+      --live: #ff6b62;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  header {
+    padding: 28px 20px 18px;
+    border-bottom: 3px solid var(--pitch);
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  h1 { margin: 0; font-size: 1.9rem; font-weight: 800; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 14px; color: var(--muted); }
+  .date-row { display: flex; gap: 10px; align-items: center; }
+  input[type="date"] {
+    font: inherit;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  button {
+    font: inherit;
+    padding: 8px 16px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--pitch);
+    color: var(--bg);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--live); outline-offset: 2px; }
+  main { max-width: 720px; margin: 0 auto; padding: 8px 20px 60px; }
+  .league {
+    margin: 26px 0 4px;
+    font-size: 0.95rem;
+    color: var(--pitch);
+    font-weight: 800;
+  }
+  .match {
+    display: grid;
+    grid-template-columns: 1fr 86px 1fr;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .team { font-weight: 700; }
+  .team.away { text-align: left; }
+  .mid { text-align: center; font-variant-numeric: tabular-nums; }
+  .mid .time { font-size: 1.1rem; font-weight: 800; }
+  .mid .state { font-size: 0.75rem; color: var(--muted); }
+  .mid .state.live { color: var(--live); font-weight: 800; }
+  .msg { padding: 28px 0; color: var(--muted); }
+  .msg.error { color: var(--live); }
+  .msg code { direction: ltr; unicode-bidi: embed; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GoalPulse</h1>
+  <p>مباريات كرة القدم حسب التاريخ</p>
+  <div class="date-row">
+    <input type="date" id="date" aria-label="اختر التاريخ">
+    <button id="load">عرض المباريات</button>
+  </div>
+</header>
+<main id="out" aria-live="polite"></main>
+
+<script>
+  const out = document.getElementById("out");
+  const dateInput = document.getElementById("date");
+  const STATUS = { scheduled: "لم تبدأ", live: "مباشر", finished: "انتهت", postponed: "مؤجلة" };
+
+  dateInput.value = new Date().toISOString().slice(0, 10);
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function showMessage(text, isError) {
+    out.replaceChildren(el("div", "msg" + (isError ? " error" : ""), text));
+  }
+
+  function prettyLeague(id) {
+    return String(id || "مباريات أخرى").replace(/^comp_/, "").replace(/_/g, " ");
+  }
+
+  function render(matches) {
+    if (!matches.length) return showMessage("لا توجد مباريات في هذا التاريخ. جرّب يوماً آخر.");
+    const groups = {};
+    matches.forEach(m => (groups[m.competitionId] ||= []).push(m));
+    out.replaceChildren();
+    Object.entries(groups).forEach(([comp, list]) => {
+      out.append(el("div", "league", prettyLeague(comp)));
+      list.forEach(m => {
+        const row = el("div", "match");
+        row.append(el("div", "team", m.homeTeam?.name ?? "—"));
+
+        const mid = el("div", "mid");
+        const hs = m.score?.home ?? m.homeScore;
+        const as = m.score?.away ?? m.awayScore;
+        const hasScore = hs !== undefined && hs !== null && as !== undefined && as !== null;
+        const time = m.kickoffAt
+          ? new Date(m.kickoffAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })
+          : "";
+        mid.append(el("div", "time", hasScore ? `${hs} - ${as}` : time));
+        mid.append(el("div", "state" + (m.status === "live" ? " live" : ""), STATUS[m.status] || m.status || ""));
+        row.append(mid);
+
+        row.append(el("div", "team away", m.awayTeam?.name ?? "—"));
+        out.append(row);
+      });
+    });
+  }
+
+  async function load() {
+    showMessage("جاري التحميل…");
+    try {
+      const res = await fetch(`/api/matches?date=${dateInput.value}`);
+      const json = await res.json();
+      if (!res.ok) {
+        const detail = json.error?.message || json.error || `رمز الخطأ ${res.status}`;
+        return showMessage(`تعذر جلب المباريات: ${detail}`, true);
+      }
+      render(json.data || []);
+    } catch (e) {
+      showMessage("تعذر الاتصال بالخادم. تأكد من رفع مجلد api مع الموقع.", true);
+    }
+  }
+
+  document.getElementById("load").addEventListener("click", load);
+  load();
+</script>
+</body>
+</html>
